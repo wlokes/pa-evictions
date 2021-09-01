@@ -22,7 +22,7 @@ This application specifically searches for Landlord/Tenant Dockets filed by Magi
 * In an attempt to prevent hitting the rate limit this app will 
   * Pause for 2 seconds between requests and
   * Pause for 45 seconds every 15th request 
-  * These values are complete arbitrary and don't always work, but for most searches that are an interval of six months of less it seems ok.
+  * These values are complete arbitrary and don't always work, but for most searches that are an interval of 16 to 30 days it seems ok.
 
 # How to use
 
