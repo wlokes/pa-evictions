@@ -74,9 +74,11 @@ public class PaEvictionsApplication implements CommandLineRunner {
                 .map(PaEvictionsApplication::extractDocketContent)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toCollection(TreeSet::new));
-            log.info("Fetched and extracted content of docket PDFs");
             if (CollectionUtils.isNotEmpty(dockets)) {
+                log.info("Fetched and extracted content of docket PDFs");
                 createExcelOutput(dockets);
+            } else {
+                log.info("No dockets were filed between {} and {}", startDate, endDate);
             }
         }
         else {
