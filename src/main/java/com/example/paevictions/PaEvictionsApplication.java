@@ -25,7 +25,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
-import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 
@@ -48,11 +47,16 @@ public class PaEvictionsApplication implements CommandLineRunner {
 
     private final static DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
+    private final static String ALL_TARGET_COURTS = "all";
+
     @Value("${startDate}")
     private String startDate;
 
     @Value("${endDate}")
     private String endDate;
+
+    @Value("${districtCourtId:all}")
+    private String districtCourtId;
 
     public static void main(String[] args) {
         new SpringApplicationBuilder(PaEvictionsApplication.class)
@@ -66,7 +70,7 @@ public class PaEvictionsApplication implements CommandLineRunner {
         if (CollectionUtils.isNotEmpty(htmlDocuments)) {
             log.info("Fetching docket PDFs, hang tight this may take several minutes...");
 
-            Set<String> links = htmlDocuments.stream().flatMap(document -> extractDocketLinks(document).stream()).collect(Collectors.toCollection(LinkedHashSet::new));
+            Set<String> links = htmlDocuments.stream().flatMap(document -> extractDocketLinks(document, districtCourtId).stream()).collect(Collectors.toCollection(LinkedHashSet::new));
             AtomicInteger requestCounter = new AtomicInteger();
             SortedSet<Pair<String, List<String>>> dockets = links.stream()
                 .map(url -> getDocket(url, requestCounter))
@@ -76,8 +80,9 @@ public class PaEvictionsApplication implements CommandLineRunner {
                 .collect(Collectors.toCollection(TreeSet::new));
             if (CollectionUtils.isNotEmpty(dockets)) {
                 log.info("Fetched and extracted content of docket PDFs");
-                createExcelOutput(dockets);
-            } else {
+                createExcelOutput(dockets, districtCourtId);
+            }
+            else {
                 log.info("No dockets were filed between {} and {}", startDate, endDate);
             }
         }
@@ -117,7 +122,7 @@ public class PaEvictionsApplication implements CommandLineRunner {
                 .header("Sec-Fetch-Dest", "document")
                 .header("Sec-Fetch-Mode", "navigate")
                 .header("Sec-Fetch-User", "?1")
-                .body("SearchBy=DateFiled&AdvanceSearch=true&ParticipantSID=&ParticipantSSN=&FiledStartDate=" + start + "&FiledEndDate=" + end + "&County=Northampton&MDJSCourtOffice=MDJ-03-2-10&PADriversLicenseNumber=&CalendarEventStartDate=&CalendarEventEndDate=&CalendarEventType=&__RequestVerificationToken=CfDJ8MpxQXjimVFCpy5zybqEOu3NPM_E9zPEx9kjX1NPE2K1YDQD6eDlzmW_b6sYROBIQSNbEeR_1P23Y1sOkfTcALUrpN2FWmewttYlPzf9aF899voshfSBCo3s4pYjfEi0rkiC4wZcDVAL7gkW15M2_XQ")
+                .body("SearchBy=DateFiled&AdvanceSearch=true&ParticipantSID=&ParticipantSSN=&FiledStartDate=" + start + "&FiledEndDate=" + end + "&County=Northampton&MDJSCourtOffice=&PADriversLicenseNumber=&CalendarEventStartDate=&CalendarEventEndDate=&CalendarEventType=&__RequestVerificationToken=CfDJ8MpxQXjimVFCpy5zybqEOu3NPM_E9zPEx9kjX1NPE2K1YDQD6eDlzmW_b6sYROBIQSNbEeR_1P23Y1sOkfTcALUrpN2FWmewttYlPzf9aF899voshfSBCo3s4pYjfEi0rkiC4wZcDVAL7gkW15M2_XQ")
                 .asString();
 
             if (!response.isSuccess()) {
@@ -133,22 +138,29 @@ public class PaEvictionsApplication implements CommandLineRunner {
         return result;
     }
 
-    private static Set<String> extractDocketLinks(String html) {
+    private static Set<String> extractDocketLinks(String html, String districtCourtId) {
         Document document = Jsoup.parse(html);
-        Elements elements = document.select("[href^=/Report/MdjDocketSheet?docketNumber=MJ-03210-LT]");
+        Elements elements;
+        if (ALL_TARGET_COURTS.equals(districtCourtId)) {
+            elements = document.select("[href^=/Report/MdjDocketSheet?docketNumber=MJ-03210-LT],[href^=/Report/MdjDocketSheet?docketNumber=MJ-03211-LT]");
+        }
+        else {
+            elements = document.select("[href^=/Report/MdjDocketSheet?docketNumber=MJ-" + districtCourtId + "-LT]");
+        }
         return elements.eachAttr("href").stream().collect(Collectors.toUnmodifiableSet());
     }
 
     private static Pair<String, byte[]> getDocket(String path, AtomicInteger requestCounter) {
         int counter = requestCounter.get();
-        if (counter > 0 && counter %  15 == 0) {
+        if (counter > 0 && counter % 15 == 0) {
             // API returns 429 if too many requests are made,
             try {
                 log.info("Still working...");
                 TimeUnit.SECONDS.sleep(45);
             } catch (InterruptedException ignored) {
             }
-        } else if (counter > 0) {
+        }
+        else if (counter > 0) {
             try {
                 TimeUnit.SECONDS.sleep(2);
             } catch (InterruptedException ignored) {
@@ -186,7 +198,7 @@ public class PaEvictionsApplication implements CommandLineRunner {
         }
     }
 
-    private void createExcelOutput(SortedSet<Pair<String, List<String>>> dockets) {
+    private void createExcelOutput(SortedSet<Pair<String, List<String>>> dockets, String districtCourtId) {
         log.info("Extracting content from docket PDFs and building a spreadsheet");
         HSSFWorkbook workbook = new HSSFWorkbook();
         HSSFCreationHelper createHelper = workbook.getCreationHelper();
@@ -207,7 +219,16 @@ public class PaEvictionsApplication implements CommandLineRunner {
         }
 
         IntStream.rangeClosed(0, 8).forEach(sheet::autoSizeColumn);
-        try (OutputStream fileOut = new FileOutputStream(System.getProperty("user.home") + "/Desktop/" + "magisterial-district-judge-03-2-10-landlord-tenant-dockets-" + startDate + "_to_" + endDate +".xls")) {
+
+        String filename;
+        if (ALL_TARGET_COURTS.equals(districtCourtId)) {
+            filename = System.getProperty("user.home") + "/Desktop/" + "multiple-magisterial-district-landlord-tenant-dockets-" + startDate + "_to_" + endDate + ".xls";
+        }
+        else {
+            filename = System.getProperty("user.home") + "/Desktop/" + "magisterial-district-judge-" + districtCourtId + "-landlord-tenant-dockets-" + startDate + "_to_" + endDate + ".xls";
+        }
+
+        try (OutputStream fileOut = new FileOutputStream(filename)) {
             workbook.write(fileOut);
         } catch (Exception e) {
             log.error("Unable to create file", e);
@@ -229,6 +250,17 @@ public class PaEvictionsApplication implements CommandLineRunner {
 
     private static void createRow(HSSFCreationHelper createHelper, CellStyle wrappedText, CellStyle dateCellStyle, HSSFSheet sheet, Pair<String, List<String>> docket, int rowIndex) {
         List<String> docketContent = docket.getRight();
+        String defendantText = docketContent.stream()
+            .filter(d -> d.startsWith("Defendant "))
+            .map(d -> d.substring(10))
+            .map(String::trim)
+            .collect(Collectors.joining("\n"));
+
+        if (defendantText.endsWith("18017")) {
+            log.warn("Skipping docket because defendant's address in 18017. {}", "https://ujsportal.pacourts.us" + docket.getLeft());
+            return;
+        }
+
         Row row = sheet.createRow(rowIndex);
         row.createCell(0, CellType.STRING)
             .setCellValue(
@@ -308,13 +340,7 @@ public class PaEvictionsApplication implements CommandLineRunner {
 
         Cell defendant = row.createCell(6, CellType.STRING);
         defendant.setCellStyle(wrappedText);
-        defendant.setCellValue(
-            docketContent.stream()
-                .filter(d -> d.startsWith("Defendant "))
-                .map(d -> d.substring(10))
-                .map(String::trim)
-                .collect(Collectors.joining("\n"))
-        );
+        defendant.setCellValue(defendantText);
 
         row.createCell(7, CellType.NUMERIC)
             .setCellValue(
