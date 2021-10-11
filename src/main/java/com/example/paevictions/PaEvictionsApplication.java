@@ -275,7 +275,7 @@ public class PaEvictionsApplication implements CommandLineRunner {
         dateFiled.setCellStyle(dateCellStyle);
         dateFiled.setCellValue(
             docketContent.stream()
-                .filter(d -> d.contains("File Date:Magisterial District Judge Nancy Matos"))
+                .filter(d -> d.contains("File Date:Magisterial District Judge"))
                 .findFirst()
                 .map(d -> d.substring(0, 10))
                 .orElse(StringUtils.EMPTY)
